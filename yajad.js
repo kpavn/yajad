@@ -30,6 +30,10 @@ var BStream = (function () {
 		return result;
 	};
 
+	BStream.prototype.getPosition = function () {
+		return this.curIdx;
+	};
+
 	return BStream;
 }());
 
@@ -286,6 +290,7 @@ function parseClassFile(data) {
 
 	parseAttributes(bs, classFileData);
 
+	console.log("idx: " + bs.getPosition());
 	console.log(classFileData);
 
 	// TODO - throw prepared data via EventEmitter
