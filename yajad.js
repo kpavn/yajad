@@ -37,34 +37,44 @@ function validateCPool(constPool) {
 	return null;
 }
 
-// data - raw Buffer
-function parseClassFile(data) {
-	var classFileData = {},
-	    bs = new BStream(data),
-	    idx = 0,
+function decodeAccessFlags(flags, type) {
+	var results = [],
+	    masks = [
+			{b: 0x0001, m: "ACC_PUBLIC", n: "Class, Field, Method"},
+			{b: 0x0002, m: "ACC_PRIVATE", n: "Field, Method"},
+			{b: 0x0004, m: "ACC_PROTECTED", n: "Field, Method"},
+			{b: 0x0002, m: "ACC_STATIC", n: "Field, Method"},
+			{b: 0x0010, m: "ACC_FINAL", n: "Class, Field, Method"},
+			{b: 0x0020, m: "ACC_SUPER", n: "Class, Field"},
+			{b: 0x0020, m: "ACC_SYNCHRONIZED", n: "Method"},
+			{b: 0x0040, m: "ACC_VOLATILE", n: "Field"},
+			{b: 0x0040, m: "ACC_BRIDGE", n: "Method"},
+			{b: 0x0080, m: "ACC_TRANSIENT", n: "Field"},
+			{b: 0x0080, m: "ACC_VARARGS", n: "Method"},
+			{b: 0x0100, m: "ACC_NATIVE", n: "Method"},
+			{b: 0x0200, m: "ACC_INTERFACE", n: "Class, Field"},
+			{b: 0x0400, m: "ACC_ABSTRACT", n: "Class, Field, Method"},
+			{b: 0x0800, m: "ACC_STRICT", n: "Method"},
+			{b: 0x1000, m: "ACC_SYNTHETIC", n: "Class, Field"},
+			{b: 0x2000, m: "ACC_ANNOTATION", n: "Class, Field"},
+			{b: 0x4000, m: "ACC_ENUM", n: "Class, Field"}
+	    ];
+
+	masks.forEach(function (m) {
+		if ((flags & m.b > 0) && (m.n.indexOf(type) !== -1)) {
+			results.push(m.m);
+		}
+	});
+
+	return results;
+}
+
+function parseCPool(bs, classFileData) {
+	var idx = 0,
+	    str_idx = 0,
 	    cp_tag = 0,
-	    cp_data,
-	    str_idx;
+	    cp_data = {};
 
-	// 0. check class file signature
-	if (bs.nextU4() !== 0xCAFEBABE) {
-		console.log("Invalid class file format");
-		return;
-	}
-
-	classFileData.magic = 0xCAFEBABE;
-
-	// 1. check required jvm version
-	classFileData.minor_version = bs.nextU2();
-	classFileData.major_version = bs.nextU2();
-
-	if (classFileData.major_version >= 45) {
-		classFileData.jvm_version = "1." + (classFileData.major_version - 44);
-	}
-
-	console.log("Required vm: " + classFileData.jvm_version);
-
-	// 2. Constant pool parsing
 	classFileData.constant_pool_count = bs.nextU2();
 	classFileData.constant_pool = [];
 
@@ -108,10 +118,17 @@ function parseClassFile(data) {
 			cp_data.cp_type = "CONSTANT_Float";
 			cp_data.bytes = bs.nextU4();
 			break;
+		case 5:
+			cp_data.cp_type = "CONSTANT_Long";
+			cp_data.high_bytes = bs.nextU4();
+			cp_data.low_bytes = bs.nextU4();
+			idx += 1;
+			break;
 		case 6:
 			cp_data.cp_type = "CONSTANT_Double";
 			cp_data.high_bytes = bs.nextU4();
 			cp_data.low_bytes = bs.nextU4();
+			idx += 1;
 			break;
 		case 12:
 			cp_data.cp_type = "CONSTANT_NameAndType";
@@ -122,11 +139,10 @@ function parseClassFile(data) {
 			cp_data.cp_type = "CONSTANT_Utf8";
 			cp_data.length = bs.nextU2();
 			cp_data.bytes = [];
-			str_idx = 0;
-			while (str_idx < cp_data.length) {
-				cp_data.bytes[str_idx] = bs.nextU();
-				str_idx += 1;
+			for (str_idx = 0; str_idx < cp_data.length; str_idx += 1) {
+				cp_data.bytes.push(bs.nextU());
 			}
+			cp_data.str = new Buffer(cp_data.bytes).toString("utf8");
 			break;
 		case 15:
 			cp_data.cp_type = "CONSTANT_MethodHandle";
@@ -148,27 +164,127 @@ function parseClassFile(data) {
 			break;
 		}
 
-		classFileData.constant_pool[idx - 1] = cp_data;
+		classFileData.constant_pool.push(cp_data);
 
 		idx += 1;
 	}
+}
+
+function parseAttributes(bs, classFileData) {
+	var idx = 0,
+	    idx2 = 0,
+	    attr_info = {};
+
+	classFileData.attributes_count = bs.nextU2();
+	classFileData.attributes = [];
+
+	for (idx = 0; idx < classFileData.attributes_count; idx += 1) {
+		attr_info = {};
+
+		attr_info.attribute_name_index = bs.nextU2();
+		attr_info.attribute_length = bs.nextU4();
+		attr_info.info = [];
+
+		for (idx2 = 0; idx2 < attr_info.attribute_length; idx2 += 1) {
+			attr_info.info.push(bs.nextU());
+		}
+
+		classFileData.attributes.push(attr_info);
+	}
+
+	return;
+}
+
+function parseFields(bs, classFileData) {
+	var idx = 0,
+	    field_info = {};
+
+	classFileData.fields_count = bs.nextU2();
+	classFileData.fields = [];
+
+	for (idx = 0; idx < classFileData.fields_count; idx += 1) {
+		field_info = {};
+		field_info.access_flags = bs.nextU2();
+		field_info.access_flags_decoded = decodeAccessFlags(field_info.access_flags, "Field");
+		field_info.name_index = bs.nextU2();
+		field_info.name_decoded = classFileData.constant_pool[field_info.name_index].str;
+		field_info.desciptor_index = bs.nextU2();
+		parseAttributes(bs, field_info);
+		classFileData.fields.push(field_info);
+	}
+}
+
+function parseMethods(bs, classFileData) {
+	var idx = 0,
+	    method_info = {};
+
+	classFileData.methods_count = bs.nextU2();
+	classFileData.methods = [];
+
+	for (idx = 0; idx < classFileData.methods_count; idx += 1) {
+		method_info = {};
+		method_info.access_flags = bs.nextU2();
+		method_info.access_flags_decoded = decodeAccessFlags(method_info.access_flags, "Method");
+		method_info.name_index = bs.nextU2();
+		method_info.name_decoded = classFileData.constant_pool[method_info.name_index].str;
+		method_info.desciptor_index = bs.nextU2();
+		parseAttributes(bs, method_info);
+
+		classFileData.methods.push(method_info);
+	}
+
+	return;
+}
+
+// data - raw Buffer
+// TODO - split to small pieces
+function parseClassFile(data) {
+	var classFileData = {},
+	    bs = new BStream(data),
+	    idx = 0;
+
+	// 0. check class file signature
+	if (bs.nextU4() !== 0xCAFEBABE) {
+		console.log("Invalid class file format");
+		return;
+	}
+
+	classFileData.magic = 0xCAFEBABE;
+
+	// 1. check required jvm version
+	classFileData.minor_version = bs.nextU2();
+	classFileData.major_version = bs.nextU2();
+
+	if (classFileData.major_version >= 45) {
+		classFileData.jvm_version = "1." + (classFileData.major_version - 44);
+	}
+
+	console.log("Required vm: " + classFileData.jvm_version);
+
+	// 2. Constant pool parsing
+
+	parseCPool(bs, classFileData);
 
 	// TODO add validation logic
 	validateCPool(classFileData.constant_pool);
 
 	classFileData.access_flags = bs.nextU2();
+	classFileData.access_flags_decoded = decodeAccessFlags(classFileData.access_flags, "Class");
+
 	classFileData.this_class = bs.nextU2();
 	classFileData.super_class = bs.nextU2();
 	classFileData.interface_count = bs.nextU2();
 	classFileData.interfaces = [];
 
-	idx = 0;
-
-	while (idx < classFileData.interface_count) {
-		classFileData.interfaces[idx] = bs.nextU2();
+	for (idx = 0; idx < classFileData.interface_count; idx += 1) {
+		classFileData.interfaces.push(bs.nextU2());
 	}
 
-	classFileData.fields_count = bs.nextU2();
+	parseFields(bs, classFileData);
+
+	parseMethods(bs, classFileData);
+
+	parseAttributes(bs, classFileData);
 
 	console.log(classFileData);
 
