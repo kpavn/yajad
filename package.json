@@ -3,6 +3,7 @@
   "description": "Yet Another Java Decompiler",
   "version": "0.0.1",
   "dependencies": {
-    "optimist": "0.3.x"
+    "optimist": "0.3.x",
+    "underscore": "1.4.x"
   }
 }

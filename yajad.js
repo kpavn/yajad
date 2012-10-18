@@ -2,7 +2,9 @@
 "use strict";
 
 var fs = require("fs"),
-    argv = require("optimist").argv;
+    argv = require("optimist").argv,
+    _ = require("underscore"),
+    assert = require("assert");
 
 console.log("Parsing file " + argv.file);
 
@@ -37,8 +39,8 @@ var BStream = (function () {
 	return BStream;
 }());
 
-function validateCPool(constPool) {
-	return null;
+function validateFormat(classFileData) {
+	return;
 }
 
 function decodeAccessFlags(flags, type) {
@@ -65,7 +67,7 @@ function decodeAccessFlags(flags, type) {
 		];
 
 	masks.forEach(function (m) {
-		if ((flags & m.b > 0) && (m.n.indexOf(type) !== -1)) {
+		if (((flags & m.b) > 0) && (m.n.indexOf(type) !== -1)) {
 			results.push(m.m);
 		}
 	});
@@ -73,18 +75,19 @@ function decodeAccessFlags(flags, type) {
 	return results;
 }
 
-function parseCPool(bs, classFileData) {
+function parseCPool(bs) {
 	var idx = 0,
 		str_idx = 0,
 		cp_tag = 0,
-		cp_data = {};
+		cp_data = {},
+		constant_pool_count = 0,
+		constant_pool = [];
 
-	classFileData.constant_pool_count = bs.nextU2();
-	classFileData.constant_pool = [];
+	constant_pool_count = bs.nextU2();
 
 	idx = 1;
 
-	while (idx <= classFileData.constant_pool_count - 1) {
+	while (idx <= constant_pool_count - 1) {
 		cp_tag = bs.nextU();
 		cp_data = {
 			'cp_tag': cp_tag,
@@ -168,21 +171,24 @@ function parseCPool(bs, classFileData) {
 			break;
 		}
 
-		classFileData.constant_pool.push(cp_data);
+		constant_pool[idx] = cp_data;
 
 		idx += 1;
 	}
+
+	return {"constant_pool_count": constant_pool_count, "constant_pool": constant_pool};
 }
 
-function parseAttributes(bs, classFileData) {
+function parseAttributes(bs) {
 	var idx = 0,
 		idx2 = 0,
-		attr_info = {};
+		attr_info = {},
+		attributes_count = 0,
+		attributes = [];
 
-	classFileData.attributes_count = bs.nextU2();
-	classFileData.attributes = [];
+	attributes_count = bs.nextU2();
 
-	for (idx = 0; idx < classFileData.attributes_count; idx += 1) {
+	for (idx = 0; idx < attributes_count; idx += 1) {
 		attr_info = {};
 
 		attr_info.attribute_name_index = bs.nextU2();
@@ -193,49 +199,125 @@ function parseAttributes(bs, classFileData) {
 			attr_info.info.push(bs.nextU());
 		}
 
-		classFileData.attributes.push(attr_info);
+		attributes.push(attr_info);
 	}
 
-	return;
+	return {"attributes_count": attributes_count, "attributes": attributes};
 }
 
-function parseFields(bs, classFileData) {
+function parseFields(bs) {
 	var idx = 0,
-		field_info = {};
+		field_info = {},
+		fields_count = 0,
+		fields = [];
 
-	classFileData.fields_count = bs.nextU2();
-	classFileData.fields = [];
+	fields_count = bs.nextU2();
 
-	for (idx = 0; idx < classFileData.fields_count; idx += 1) {
+	for (idx = 0; idx < fields_count; idx += 1) {
 		field_info = {};
 		field_info.access_flags = bs.nextU2();
 		field_info.access_flags_decoded = decodeAccessFlags(field_info.access_flags, "Field");
 		field_info.name_index = bs.nextU2();
-		field_info.name_decoded = classFileData.constant_pool[field_info.name_index].str;
 		field_info.desciptor_index = bs.nextU2();
-		parseAttributes(bs, field_info);
-		classFileData.fields.push(field_info);
+		_.extend(field_info, parseAttributes(bs));
+		fields.push(field_info);
 	}
+
+	return {"fields_count": fields_count, "fields": fields};
 }
 
-function parseMethods(bs, classFileData) {
+function parseMethods(bs) {
 	var idx = 0,
-		method_info = {};
+		method_info = {},
+		methods_count = 0,
+		methods = [];
 
-	classFileData.methods_count = bs.nextU2();
-	classFileData.methods = [];
+	methods_count = bs.nextU2();
 
-	for (idx = 0; idx < classFileData.methods_count; idx += 1) {
+	for (idx = 0; idx < methods_count; idx += 1) {
 		method_info = {};
 		method_info.access_flags = bs.nextU2();
 		method_info.access_flags_decoded = decodeAccessFlags(method_info.access_flags, "Method");
 		method_info.name_index = bs.nextU2();
-		method_info.name_decoded = classFileData.constant_pool[method_info.name_index].str;
 		method_info.desciptor_index = bs.nextU2();
-		parseAttributes(bs, method_info);
+		_.extend(method_info, parseAttributes(bs));
 
-		classFileData.methods.push(method_info);
+		methods.push(method_info);
 	}
+
+	return {"methods_count": methods_count, "methods": methods};
+}
+
+// convert / to . in full qualified names
+function translateName(name) {
+	return name.replace(new RegExp("/", "g"), ".");
+}
+
+function getClassName(class_idx, data) {
+	var clsName,
+		clsInfo;
+
+	clsInfo = data.constant_pool[class_idx];
+	clsName = data.constant_pool[clsInfo.name_index];
+	assert.equal(clsInfo.cp_type, "CONSTANT_Class", "This class should point to CONSTANT_Class, idx " + class_idx);
+	assert.equal(clsName.cp_type, "CONSTANT_Utf8", "Name should point to CONSTANT_Utf8, idx " + clsInfo.name_index);
+
+	return translateName(clsName.str);
+}
+
+function dumpToText(clsData) {
+	var str = "";
+	if (clsData.isPublic) {str += "public ";}
+	if (clsData.isFinal) {str += "final ";}
+	if (clsData.isAbstract) {str += "abstract ";}
+
+	if (clsData.isInterface) {str += "interface ";}
+	else if (clsData.isAnnotation) {str += "annotation ";}
+	else if (clsData.isEnum) {str += "enum ";}
+	else  {str += "class ";}
+
+	str += clsData.class_name;
+
+	if (clsData.extend_name) {
+		str += " extends " + clsData.extend_name;
+	}
+
+	if (clsData.implement_names.length > 0) {
+		str += " implements " + clsData.implement_names.join(", ");
+	}
+
+	str += "{\n};\n";
+
+	return str;
+}
+
+function showClass(data) {
+	var idx,
+		clsData = {},
+		flags = [];
+
+	clsData.class_name = getClassName(data.this_class, data);
+
+	if (data.super_class > 0) {
+		clsData.extend_name = getClassName(data.super_class, data);
+	}
+
+	clsData.implement_names = [];
+
+	for (idx = 0; idx < data.interface_count; idx += 1) {
+		clsData.implement_names.push(getClassName(data.interfaces[idx], data));
+	}
+
+	flags = decodeAccessFlags(data.access_flags, "Class");
+
+	clsData.isPublic     = (_.indexOf(flags, "ACC_PUBLIC") !== -1);
+	clsData.isFinal      = (_.indexOf(flags, "ACC_FINAL") !== -1);
+	clsData.isAbstract   = (_.indexOf(flags, "ACC_ABSTRACT") !== -1);
+	clsData.isInterface  = (_.indexOf(flags, "ACC_INTERFACE") !== -1);
+	clsData.isEnum       = (_.indexOf(flags, "ACC_ENUM") !== -1);
+	clsData.isAnnotation = (_.indexOf(flags, "ACC_ANNOTATION") !== -1);
+
+	console.log(dumpToText(clsData));
 
 	return;
 }
@@ -267,10 +349,7 @@ function parseClassFile(data) {
 
 	// 2. Constant pool parsing
 
-	parseCPool(bs, classFileData);
-
-	// TODO add validation logic
-	validateCPool(classFileData.constant_pool);
+	_.extend(classFileData, parseCPool(bs));
 
 	classFileData.access_flags = bs.nextU2();
 	classFileData.access_flags_decoded = decodeAccessFlags(classFileData.access_flags, "Class");
@@ -284,14 +363,18 @@ function parseClassFile(data) {
 		classFileData.interfaces.push(bs.nextU2());
 	}
 
-	parseFields(bs, classFileData);
+	_.extend(classFileData, parseFields(bs));
 
-	parseMethods(bs, classFileData);
+	_.extend(classFileData, parseMethods(bs));
 
-	parseAttributes(bs, classFileData);
+	_.extend(classFileData, parseAttributes(bs));
 
-	console.log("idx: " + bs.getPosition());
-	console.log(classFileData);
+	//console.log(classFileData);
+
+	// TODO add validation logic
+	validateFormat(classFileData);
+
+	showClass(classFileData);
 
 	// TODO - throw prepared data via EventEmitter
 	return classFileData;
