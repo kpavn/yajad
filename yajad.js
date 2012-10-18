@@ -43,7 +43,7 @@ function validateCPool(constPool) {
 
 function decodeAccessFlags(flags, type) {
 	var results = [],
-	    masks = [
+		masks = [
 			{b: 0x0001, m: "ACC_PUBLIC", n: "Class, Field, Method"},
 			{b: 0x0002, m: "ACC_PRIVATE", n: "Field, Method"},
 			{b: 0x0004, m: "ACC_PROTECTED", n: "Field, Method"},
@@ -62,7 +62,7 @@ function decodeAccessFlags(flags, type) {
 			{b: 0x1000, m: "ACC_SYNTHETIC", n: "Class, Field"},
 			{b: 0x2000, m: "ACC_ANNOTATION", n: "Class, Field"},
 			{b: 0x4000, m: "ACC_ENUM", n: "Class, Field"}
-	    ];
+		];
 
 	masks.forEach(function (m) {
 		if ((flags & m.b > 0) && (m.n.indexOf(type) !== -1)) {
@@ -75,9 +75,9 @@ function decodeAccessFlags(flags, type) {
 
 function parseCPool(bs, classFileData) {
 	var idx = 0,
-	    str_idx = 0,
-	    cp_tag = 0,
-	    cp_data = {};
+		str_idx = 0,
+		cp_tag = 0,
+		cp_data = {};
 
 	classFileData.constant_pool_count = bs.nextU2();
 	classFileData.constant_pool = [];
@@ -176,8 +176,8 @@ function parseCPool(bs, classFileData) {
 
 function parseAttributes(bs, classFileData) {
 	var idx = 0,
-	    idx2 = 0,
-	    attr_info = {};
+		idx2 = 0,
+		attr_info = {};
 
 	classFileData.attributes_count = bs.nextU2();
 	classFileData.attributes = [];
@@ -201,7 +201,7 @@ function parseAttributes(bs, classFileData) {
 
 function parseFields(bs, classFileData) {
 	var idx = 0,
-	    field_info = {};
+		field_info = {};
 
 	classFileData.fields_count = bs.nextU2();
 	classFileData.fields = [];
@@ -220,7 +220,7 @@ function parseFields(bs, classFileData) {
 
 function parseMethods(bs, classFileData) {
 	var idx = 0,
-	    method_info = {};
+		method_info = {};
 
 	classFileData.methods_count = bs.nextU2();
 	classFileData.methods = [];
@@ -244,8 +244,8 @@ function parseMethods(bs, classFileData) {
 // TODO - split to small pieces
 function parseClassFile(data) {
 	var classFileData = {},
-	    bs = new BStream(data),
-	    idx = 0;
+		bs = new BStream(data),
+		idx = 0;
 
 	// 0. check class file signature
 	if (bs.nextU4() !== 0xCAFEBABE) {
